@@ -45,11 +45,13 @@ void ForEachIntegerConstant(IntegerConstants<IntValue0, IntValueX...>, F f)
 
 template<typename F> constexpr void ConstexprIf(std::false_type, F) { }
 template<typename F> constexpr void ConstexprIf(std::true_type, F f) { f(); }
+template<typename F1, typename F2> constexpr void ConstexprIfElse(std::false_type, F1, F2 f_false) { f_false(); }
+template<typename F1, typename F2> constexpr void ConstexprIfElse(std::true_type, F1 f_true, F2) { f_true(); }
 template<bool> struct BoolType : public std::false_type { };
 template<> struct BoolType<true> : public std::true_type { };
 
 /*
-	The other way around:
+	The other way around (kudos https://github.com/mpusz):
 
 	template<bool B>
 	struct ConstexprIf_helper {
