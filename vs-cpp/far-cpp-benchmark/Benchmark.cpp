@@ -59,68 +59,27 @@ namespace
 		void deallocate(pointer p, std::size_t n) { assert(n == 1); _colony.erase(p); }
 	};
 
-	//template<typename...>
-	//class UniformGenerator;
+    struct less_dereference
+    {
+        template<typename PtrType>
+        bool operator()(const PtrType a, const PtrType b) const
+        {
+            return *a < *b;
+        }
+    };
 
-	//template<typename ElementTag>
-	//auto MakeUniformGenerator(ElementTag, int slots)
-	//{
-	//	return UniformGenerator<ElementTag::value_type>(slots);
-	//}
+    struct hash_dereference
+    {
+        template<typename PtrType>
+        std::size_t operator()(const PtrType p) const
+        {
+            return std::hash<std::remove_reference_t<decltype(*p)>>{}(*p);
+        }
+    };
 
-	//template<typename... T>
-	//auto to_string(UniformGenerator<T...>&) { return "uniform"s; }
 
-	//template<typename ElementType>
-	//class UniformGenerator<ElementType>
-	//{
-	//	std::mt19937_64 engine { };
-	//	std::uniform_int_distribution<> distribution;
-	//public:
-	//	explicit UniformGenerator(int slots) :
-	//		distribution { 0, slots - 1 }
-	//	{ }
-
-	//	ElementType operator()()
-	//	{
-	//		return static_cast<ElementType>(distribution(engine));
-	//	}
-	//};
-
-	//template<typename ElementType>
-	//class UniformGenerator<std::unique_ptr<ElementType>>
-	//{
-	//	std::mt19937_64 engine { };
-	//	std::uniform_int_distribution<> distribution;
-	//public:
-	//	explicit UniformGenerator(int slots) :
-	//		distribution { 0, slots - 1 }
-	//	{ }
-
-	//	auto operator()()
-	//	{
-	//		return std::make_unique<ElementType>(static_cast<ElementType>(distribution(engine)));
-	//	}
-	//};
-
-	//template<typename ElementType>
-	//class UniformGenerator<std::shared_ptr<ElementType>>
-	//{
-	//	std::mt19937_64 engine { };
-	//	std::uniform_int_distribution<> distribution;
-	//public:
-	//	explicit UniformGenerator(int slots) :
-	//		distribution { 0, slots - 1 }
-	//	{ }
-
-	//	auto operator()()
-	//	{
-	//		return std::make_shared<ElementType>(static_cast<ElementType>(distribution(engine)));
-	//	}
-	//};
-
-	template<typename ElementTag, typename AlgorithmTag, typename AllocatorTag>
-	void Benchmark(int turns, int slots, ElementTag elementTag, AlgorithmTag algorithmTag, AllocatorTag allocatorTag)
+	template<typename AlgorithmTag, typename AllocatorTag>
+	void Benchmark(int turns, int slots, AlgorithmTag algorithmTag, AllocatorTag allocatorTag)
 	{
 		namespace chrono = std::chrono;
 
@@ -129,8 +88,8 @@ namespace
 
 		// Warm up the code.
 		//
-		//if (doWarmup)
-			//PlayFindAddRemove(turns, slots, UniformGenerator{std::max(slots / 8, 1)}, algorithmTag, allocatorTag);
+		if (doWarmup)
+			PlayFindAddRemove(turns, slots, UniformGenerator{std::max(slots / 8, 1)}, algorithmTag, allocatorTag);
 
 		// Run the workload (measuring the time).
 		//
@@ -211,7 +170,7 @@ void Benchmark(int turns)
 	{
 		// void is special - it only invokes the pseudo-random generator.
 		//
-		Benchmark(turns, slots.value(), Tag<int64_t>{}, Tag<void>{}, Tag<void>{});
+		Benchmark(turns, slots.value(), Tag<void>{}, Tag<void>{});
 
 		// In positional algorithm, slot is determined by the position (index) in a pre-allocated space.
 		//
@@ -239,12 +198,12 @@ void Benchmark(int turns)
 				[=](auto algorithmTagTag)
 			{
 				using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-				Benchmark(turns, slots.value(), Tag<int64_t>{}, AlgorithmTag{}, Tag<void>{});
+				Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
 			});
 
 			if (slots.value() <= maxSlotsForBitset.value())
 			{
-				Benchmark(turns, slots.value(), Tag<int64_t>{}, PositionalTag<std::bitset<slots.value()>>{}, Tag<void>{});
+				Benchmark(turns, slots.value(), PositionalTag<std::bitset<slots.value()>>{}, Tag<void>{});
 			}
 		}
 
@@ -267,9 +226,9 @@ void Benchmark(int turns)
 
 				ForEachTag(Tag<
 					std::allocator<PrimitiveType>
-				>{}, [=](auto elementTag)
+				>{}, [=](auto allocatorTag)
 				{
-					using AllocatorType = typename decltype(elementTag)::value_type;
+					using AllocatorType = typename decltype(allocatorTag)::value_type;
 
 					// Every slot must be able to be addressed with available integer bits.
 					//
@@ -292,7 +251,7 @@ void Benchmark(int turns)
 							[=](auto algorithmTagTag)
 						{
 							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), elementTag, AlgorithmTag{}, Tag<void>{});
+							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
 						});
 
 						ForEachTag(Tag<
@@ -306,7 +265,7 @@ void Benchmark(int turns)
 							[=](auto algorithmTagTag)
 						{
 							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), elementTag, AlgorithmTag{}, Tag<void>{});
+							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
 						});
 
 						ForEachTag(Tag<
@@ -320,7 +279,7 @@ void Benchmark(int turns)
 							[=](auto algorithmTagTag)
 						{
 							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), elementTag, AlgorithmTag{}, Tag<std::allocator<PrimitiveType>>{});
+							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<std::allocator<PrimitiveType>>{});
 						});
 
 						using ColonyPointer = plf_colony_allocator<PrimitiveType>::pointer;
@@ -335,7 +294,7 @@ void Benchmark(int turns)
 							[=](auto algorithmTagTag)
 						{
 							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), elementTag, AlgorithmTag{}, Tag<plf_colony_allocator<PrimitiveType>>{});
+							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<plf_colony_allocator<PrimitiveType>>{});
 						});
 
 						//Benchmark(turns, slots.value(), elementTag, Tag<SequenceOtherTag<plf::colony<PrimitiveType>>>{}, Tag<void>{});
@@ -344,35 +303,33 @@ void Benchmark(int turns)
 					// Set-based algorithms
 					//
 					ForEachTag(Tag<
-						SetTag<std::set<PrimitiveType/*, less<PrimitiveType>*/>>,
-						SetTag<std::unordered_set<PrimitiveType/*, hash<PrimitiveType>*/>>,
-						SetTag<boost::container::flat_set<PrimitiveType/*, less<PrimitiveType>*/>>,
-						SetTag<stx::btree_set<PrimitiveType/*, less<PrimitiveType>*/>>,
-						SetTag<btree::btree_set<PrimitiveType/*, less<PrimitiveType>*/>>,
+						SetTag<std::set<PrimitiveType>>,
+						SetTag<std::unordered_set<PrimitiveType>>,
+						SetTag<boost::container::flat_set<PrimitiveType>>,
+						SetTag<stx::btree_set<PrimitiveType>>,
+						SetTag<btree::btree_set<PrimitiveType>>,
 						SetTag<google::sparse_hash_set<PrimitiveType>>
 						//SetTag<google::dense_hash_set<ElementType>> <- flawed: crashes
 					>{},
 						[=](auto algorithmTagTag)
 					{
 						using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-						Benchmark(turns, slots.value(), elementTag, AlgorithmTag{}, Tag<void>{});
+						Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
 					});
 
-					//// If the type is trivial, try also plain pointers.
-					////
-					//ConstexprIf(BoolType<std::is_trivial<ElementType>::value>{}, [=]
-					//{
-					//	auto treeAlgorithms = Tag<
-					//		SetPlainPtrTag<std::set<PrimitiveType, less<PrimitiveType>>>,
-					//		SetPlainPtrTag<std::unordered_set<PrimitiveType, hash<PrimitiveType>>>,
-					//		SetPlainPtrTag<boost::container::flat_set<PrimitiveType, less<PrimitiveType>>>,
-					//		SetPlainPtrTag<stx::btree_set<PrimitiveType, less<PrimitiveType>>>,
-					//		SetPlainPtrTag<btree::btree_set<PrimitiveType, less<PrimitiveType>>>,
-					//		SetPlainPtrTag<google::sparse_hash_set<PrimitiveType>>
-					//	>{};
-
-					//	ForEachTag(treeAlgorithms, runBenchmark);
-					//});
+                    ForEachTag(Tag<
+                        SetPlainPtrTag<std::set<PrimitiveType*, less_dereference>>,
+                        SetPlainPtrTag<std::unordered_set<PrimitiveType*, hash_dereference>>,
+                        SetPlainPtrTag<boost::container::flat_set<PrimitiveType*, less_dereference>>,
+                        SetPlainPtrTag<stx::btree_set<PrimitiveType*, less_dereference>>,
+                        SetPlainPtrTag<btree::btree_set<PrimitiveType*, less_dereference>>,
+                        SetPlainPtrTag<google::sparse_hash_set<PrimitiveType*, hash_dereference>>
+                    >{},
+                        [=](auto algorithmTagTag)
+                    {
+                        using AlgorithmTag = decltype(algorithmTagTag)::value_type;
+                        Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
+                    });
 				});
 			});
 		}

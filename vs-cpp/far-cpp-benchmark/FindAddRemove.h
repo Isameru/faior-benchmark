@@ -461,12 +461,37 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 	return { sumOfSizes };
 }
 
-/*
-	To be implemented:
+template<typename RandomGenerator, typename SetCollection>
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetPlainPtrTag<SetCollection>, Tag<void>)
+{
+    using ElementType = SetCollection::value_type;
+    using PrimitiveType = std::remove_pointer<ElementType>::type;
 
-		template<typename RandomGenerator, typename SetCollection>
-		GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetPtrTag<SetCollection>, Tag<void>)
+    auto collection = SetCollection{ };
+    int64_t sumOfSizes { 0 };
+    PrimitiveType* slotAllocation = new PrimitiveType{};
 
-		template<typename RandomGenerator, typename SetCollection>
-		GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetPlainPtrTag<SetCollection>, Tag<void>)
-*/
+    for (int turn = 0; turn < turns; ++turn)
+    {
+        *slotAllocation = static_cast<PrimitiveType>(randomGenerator());
+
+        auto insertion = collection.insert(slotAllocation);
+        if (!insertion.second)
+        {
+            auto* deletedPtr = *insertion.first;
+            collection.erase(insertion.first);
+            delete deletedPtr;
+            // slotAllocation shall be reused in the next iteration.
+        }
+        else
+        {
+            slotAllocation = new PrimitiveType{};
+        }
+
+        sumOfSizes += collection.size();
+    }
+
+    delete slotAllocation;
+
+    return { sumOfSizes };
+}
