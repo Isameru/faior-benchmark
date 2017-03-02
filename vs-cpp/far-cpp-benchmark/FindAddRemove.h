@@ -19,6 +19,41 @@ template<typename... T> struct SetTag : public Tag<T...> { };
 template<typename... T> struct SetPtrTag : public Tag<T...> { };
 template<typename... T> struct SetPlainPtrTag : public Tag<T...> { };
 
+template<typename Collection>
+auto InitCollection(Collection&) { return 0; }
+
+template<typename PrimitiveType, typename... Others>
+auto InitCollection(google::sparse_hash_set<PrimitiveType, Others...>& c)
+{
+    c.set_deleted_key(0);
+    return 0;
+}
+
+template<typename PrimitiveType, typename... Others>
+auto InitCollection(google::sparse_hash_set<PrimitiveType*, Others...>& c)
+{
+    auto ptr = std::make_unique<PrimitiveType>(0);
+    c.set_deleted_key(ptr.get());
+    return ptr;
+}
+
+template<typename PrimitiveType, typename... Others>
+auto InitCollection(google::dense_hash_set<PrimitiveType, Others...>& c)
+{
+    c.set_empty_key(0);
+    c.set_deleted_key(0);
+    return 0;
+}
+
+template<typename PrimitiveType, typename... Others>
+auto InitCollection(google::dense_hash_set<PrimitiveType*, Others...>& c)
+{
+    auto ptr = std::make_unique<PrimitiveType>(0);
+    c.set_empty_key(ptr.get());
+    c.set_deleted_key(ptr.get());
+    return ptr;
+}
+
 /*
 	The following code is support for unique_ptr and shared_ptr:
 
@@ -445,7 +480,8 @@ template<typename RandomGenerator, typename SetCollection>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetTag<SetCollection>, Tag<void>)
 {
 	auto collection = SetCollection{ };
-	int64_t sumOfSizes { 0 };
+    auto collectionAux = InitCollection(collection);
+    int64_t sumOfSizes { 0 };
 
 	for (int turn = 0; turn < turns; ++turn)
 	{
@@ -468,6 +504,7 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
     using PrimitiveType = std::remove_pointer<ElementType>::type;
 
     auto collection = SetCollection{ };
+    auto collectionAux = InitCollection(collection);
     int64_t sumOfSizes { 0 };
     PrimitiveType* slotAllocation = new PrimitiveType{};
 

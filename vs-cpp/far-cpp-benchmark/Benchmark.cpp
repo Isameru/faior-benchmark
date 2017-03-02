@@ -29,7 +29,7 @@ namespace
 		std::uniform_int_distribution<> distribution;
 	public:
 		explicit UniformGenerator(int slots) :
-			distribution{ 0, slots - 1 }
+			distribution{ 1, slots - 1 }
 		{ }
 
 		int64_t operator()()
@@ -65,6 +65,17 @@ namespace
         bool operator()(const PtrType a, const PtrType b) const
         {
             return *a < *b;
+        }
+    };
+
+    struct equal_dereference
+    {
+        using is_transparent = std::true_type;
+
+        template<typename PtrType>
+        bool operator()(const PtrType a, const PtrType b) const
+        {
+            return *a == *b;
         }
     };
 
@@ -145,7 +156,7 @@ void Benchmark(int turns)
 
 	auto slotsSeries = IntegerConstants<
 		//1,
-		//4,
+		4,
 		//16,
 		64,
 		//256,
@@ -297,7 +308,7 @@ void Benchmark(int turns)
 							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<plf_colony_allocator<PrimitiveType>>{});
 						});
 
-						//Benchmark(turns, slots.value(), elementTag, Tag<SequenceOtherTag<plf::colony<PrimitiveType>>>{}, Tag<void>{});
+						//Benchmark(turns, slots.value(), Tag<SequenceOtherTag<plf::colony<PrimitiveType>>>{}, Tag<void>{});
 					}
 
 					// Set-based algorithms
@@ -308,8 +319,9 @@ void Benchmark(int turns)
 						SetTag<boost::container::flat_set<PrimitiveType>>,
 						SetTag<stx::btree_set<PrimitiveType>>,
 						SetTag<btree::btree_set<PrimitiveType>>,
-						SetTag<google::sparse_hash_set<PrimitiveType>>
-						//SetTag<google::dense_hash_set<ElementType>> <- flawed: crashes
+						SetTag<google::sparse_hash_set<PrimitiveType>>,
+						SetTag<google::dense_hash_set<PrimitiveType>>,
+                        SetTag<tsl::hopscotch_set<PrimitiveType>>
 					>{},
 						[=](auto algorithmTagTag)
 					{
@@ -319,11 +331,13 @@ void Benchmark(int turns)
 
                     ForEachTag(Tag<
                         SetPlainPtrTag<std::set<PrimitiveType*, less_dereference>>,
-                        SetPlainPtrTag<std::unordered_set<PrimitiveType*, hash_dereference>>,
+                        SetPlainPtrTag<std::unordered_set<PrimitiveType*, hash_dereference, equal_dereference>>,
                         SetPlainPtrTag<boost::container::flat_set<PrimitiveType*, less_dereference>>,
                         SetPlainPtrTag<stx::btree_set<PrimitiveType*, less_dereference>>,
                         SetPlainPtrTag<btree::btree_set<PrimitiveType*, less_dereference>>,
-                        SetPlainPtrTag<google::sparse_hash_set<PrimitiveType*, hash_dereference>>
+                        SetPlainPtrTag<google::sparse_hash_set<PrimitiveType*, hash_dereference, equal_dereference>>,
+                        SetPlainPtrTag<google::dense_hash_set<PrimitiveType*, hash_dereference, equal_dereference>>,
+                        SetPlainPtrTag<tsl::hopscotch_set<PrimitiveType*, hash_dereference, equal_dereference>>
                     >{},
                         [=](auto algorithmTagTag)
                     {
@@ -344,7 +358,7 @@ void Benchmark(int turns)
 
 		ForEachIntegerConstant(slotsSeries, [=](auto slots)
 		{
-			std::cout << sep << "time:s" << slots.value();
+			std::cout << sep << "time:s" << (slots.value() - 1);
 		});
 
 		std::cout << std::endl;

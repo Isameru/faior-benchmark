@@ -28,3 +28,4 @@
 #include <plf_colony.h>
 #include <sparsehash/sparse_hash_set>
 #include <sparsehash/dense_hash_set>
+#include <hopscotch_map.h>
