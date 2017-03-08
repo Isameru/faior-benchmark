@@ -8,10 +8,9 @@ namespace
 {
 	using namespace std::string_literals;
 
-	constexpr auto sep = '|';
-	constexpr auto nl = '\n';
-
-	constexpr bool doWarmup = false;
+	constexpr auto sep{'|'};
+	constexpr auto nl{'\n'};
+	constexpr bool doWarmup{false};
 
 	struct BenchmarkRecord
 	{
@@ -25,68 +24,96 @@ namespace
 
 	class UniformGenerator
 	{
-		std::mt19937_64 engine{};
+		std::mt19937_64 engine;
 		std::uniform_int_distribution<> distribution;
 	public:
-		explicit UniformGenerator(int slots) :
-			distribution{ 1, slots - 1 }
-		{ }
-
-		int64_t operator()()
-		{
-			return distribution(engine);
-		}
+		explicit UniformGenerator(int slots) : distribution{ 1, slots - 1 } {}
+		int64_t operator()() { return distribution(engine); }
 	};
 
-	template<typename T>
-	class plf_colony_allocator
+	namespace slotallocmethod
 	{
-	private:
-		plf::colony<T> _colony;
-	public:
-		using value_type = T;
-		using pointer = typename plf::colony<T>::iterator;
-		using const_pointer = typename plf::colony<T>::const_iterator;
-		using reference = T&;
-		using const_reference = const T&;
-		using size_type = std::size_t;
-		using difference_type = std::ptrdiff_t;
-		using propagate_on_container_move_assignment = std::true_type;
-		template<typename U> struct rebind { using other = plf_colony_allocator<U>; };
-		using is_always_equal = std::false_type;
+		struct less_dereference
+		{
+			template<typename PtrType>
+			constexpr bool operator()(const PtrType& a, const PtrType& b) const
+			{
+				return *a < *b;
+			}
+		};
 
-		pointer allocate(std::size_t n) { assert(n == 1); return _colony.insert(0); }
-		void deallocate(pointer p, std::size_t n) { assert(n == 1); _colony.erase(p); }
-	};
+		struct equal_dereference
+		{
+			using is_transparent = std::true_type;
 
-    struct less_dereference
-    {
-        template<typename PtrType>
-        bool operator()(const PtrType a, const PtrType b) const
-        {
-            return *a < *b;
-        }
-    };
+			template<typename PtrType>
+			bool operator()(const PtrType& a, const PtrType& b) const
+			{
+				return *a == *b;
+			}
+		};
 
-    struct equal_dereference
-    {
-        using is_transparent = std::true_type;
+		struct hash_dereference
+		{
+			template<typename PtrType>
+			std::size_t operator()(const PtrType& p) const
+			{
+				return std::hash<std::remove_reference_t<decltype(*p)>>{}(*p);
+			}
+		};
 
-        template<typename PtrType>
-        bool operator()(const PtrType a, const PtrType b) const
-        {
-            return *a == *b;
-        }
-    };
 
-    struct hash_dereference
-    {
-        template<typename PtrType>
-        std::size_t operator()(const PtrType p) const
-        {
-            return std::hash<std::remove_reference_t<decltype(*p)>>{}(*p);
-        }
-    };
+		template<typename T>
+		class NewAllocMethod
+		{
+		public:
+			using PrimitiveType = T;
+			using ElementType = T*;
+
+			using Less = less_dereference;
+			using Equal = equal_dereference;
+			using Hash = hash_dereference;
+
+			T* Alloc() { return new T; }
+			T* Alloc(T&& v) { return new T{std::forward<T>(v)}; }
+			void Free(T* p) { delete p; }
+		};
+
+		template<typename T>
+		class StdAllocMethod : protected std::allocator<T>
+		{
+			using BaseClass = std::allocator<T>;
+		public:
+			using PrimitiveType = T;
+			using ElementType = T*;
+
+			using Less = less_dereference;
+			using Equal = equal_dereference;
+			using Hash = hash_dereference;
+
+			T* Alloc() { return typename BaseClass::allocate(1); }
+			T* Alloc(T&& v) { auto p = typename BaseClass::allocate(1); *p = T{std::move(v)}; return p; } // construct is deprecated
+			void Free(T* p) { BaseClass::deallocate(p, 1); }
+		};
+
+		template<typename T>
+		class PlfColonyAllocMethod
+		{
+		private:
+			plf::colony<T> _colony;
+		public:
+			using PrimitiveType = T;
+			using ElementType = typename plf::colony<T>::iterator;
+
+			using Less = less_dereference;
+			using Equal = equal_dereference;
+			using Hash = hash_dereference;
+
+			ElementType Alloc() { return Alloc({}); }
+			ElementType Alloc(T&& v) { return _colony.insert(v); }
+			void Free(ElementType p) { _colony.erase(p); }
+		};
+	}
 
 
 	template<typename AlgorithmTag, typename AllocatorTag>
@@ -99,8 +126,9 @@ namespace
 
 		// Warm up the code.
 		//
-		if (doWarmup)
+		if (doWarmup) {
 			PlayFindAddRemove(turns, slots, UniformGenerator{std::max(slots / 8, 1)}, algorithmTag, allocatorTag);
+		}
 
 		// Run the workload (measuring the time).
 		//
@@ -111,8 +139,8 @@ namespace
 
 		const auto distribution = "uniform";
 		const auto algorithm = typeid(typename algorithmTag).name();
-		const volatile auto averageFillRatio = GetRatioOf(result.SumOfSizes, { turns }) / slots;
-		const auto timePerTurnNs = GetRatioOf(chrono::duration_cast<chrono::nanoseconds>(time1 - time0).count(), { turns });
+		const volatile auto averageFillRatio = GetRatioOf(result.SumOfSizes, {turns}) / slots;
+		const auto timePerTurnNs = GetRatioOf(chrono::duration_cast<chrono::nanoseconds>(time1 - time0).count(), {turns});
 
 		//std::cout << turns
 		//	<< sep << slots
@@ -122,14 +150,14 @@ namespace
 		//	<< sep << timePerTurnNs
 		//	<< std::endl;
 
-		auto finding = std::find_if(std::begin(benchmarkRecords), std::end(benchmarkRecords), [&](const BenchmarkRecord& br) {
+		auto finding = std::find_if(std::begin(benchmarkRecords), std::end(benchmarkRecords), [&] (const BenchmarkRecord& br) {
 			return br.Turns == turns &&
 				br.Distribution == distribution &&
 				br.Algorithm == algorithm;
 		});
 
 		if (finding == std::end(benchmarkRecords)) {
-			BenchmarkRecord br { turns, std::move(distribution), std::move(algorithm), { std::make_pair(slots, timePerTurnNs) }};
+			BenchmarkRecord br{turns, std::move(distribution), std::move(algorithm), {std::make_pair(slots, timePerTurnNs)}};
 			benchmarkRecords.push_back(std::move(br));
 		} else {
 			finding->SlotsToTimePerTurnNs.insert(std::make_pair(slots, timePerTurnNs));
@@ -155,18 +183,17 @@ void Benchmark(int turns)
 	//	<< std::endl;
 
 	auto slotsSeries = IntegerConstants<
-		//1,
-		4,
-		//16,
+		2,
+		8,
 		64,
-		//256,
-		//1 * 1024,
+		256,
+		1 * 1024,
 		4 * 1024,
-		//16 * 1024,
-		//64 * 1024,
-		256 * 1024
-		//1 * 1024 * 1024,
-		//4 * 1024 * 1024,
+		16 * 1024,
+		64 * 1024,
+		256 * 1024,
+		1 * 1024 * 1024,
+		4 * 1024 * 1024
 		//16 * 1024 * 1024,
 		//64 * 1024 * 1024,
 		//256 * 1024 * 1024
@@ -177,8 +204,10 @@ void Benchmark(int turns)
 
 	// For each number of slots...
 	//
-	ForEachIntegerConstant(slotsSeries, [=](auto slots)
+	ForEachIntegerConstant(slotsSeries, [=] (auto slots)
 	{
+		std::cout << slots.value();
+
 		// void is special - it only invokes the pseudo-random generator.
 		//
 		Benchmark(turns, slots.value(), Tag<void>{}, Tag<void>{});
@@ -203,10 +232,9 @@ void Benchmark(int turns)
 				PositionalTag<std::unique_ptr<int32_t[]>>,
 				PositionalTag<std::unique_ptr<uint64_t[]>>,
 				PositionalTag<std::unique_ptr<int64_t[]>>,
-				PositionalTag<std::unique_ptr<int128_t[]>>,
 				PositionalTag<std::vector<bool>>
 			>{},
-				[=](auto algorithmTagTag)
+				[=] (auto algorithmTagTag)
 			{
 				using AlgorithmTag = decltype(algorithmTagTag)::value_type;
 				Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
@@ -230,120 +258,76 @@ void Benchmark(int turns)
 				uint32_t,
 				int64_t,
 				uint64_t
+				//intbig_t<128>
 			>{},
-				[=](auto primitiveTag)
+				[=] (auto primitiveTag)
 			{
 				using PrimitiveType = decltype(primitiveTag)::value_type;
 
 				ForEachTag(Tag<
-					std::allocator<PrimitiveType>
-				>{}, [=](auto allocatorTag)
+					PrimitiveAllocMethod<PrimitiveType>,
+					slotallocmethod::NewAllocMethod<PrimitiveType>,
+					slotallocmethod::StdAllocMethod<PrimitiveType>,
+					slotallocmethod::PlfColonyAllocMethod<PrimitiveType>
+				>{},
+					[=] (auto slotAllocTag)
 				{
-					using AllocatorType = typename decltype(allocatorTag)::value_type;
+					using SlotAllocType = decltype(slotAllocTag)::value_type;
+					using ElementType = typename SlotAllocType::ElementType;
 
-					// Every slot must be able to be addressed with available integer bits.
-					//
-					if (static_cast<uint64_t>(slots.value()) > static_cast<uint64_t>(std::numeric_limits<PrimitiveType>::max()))
-						return;
-
-					// Sequence-based algorithms
-					// When there are many slots, these work too slow to be included in benchmark.
-					//
-					if (slots.value() <= maxSlotsForSequence.value())
-					{
-						ForEachTag(Tag<
-							SequenceUnsortedTag<std::vector<PrimitiveType, AllocatorType>>,
-							SequenceSortedTag<std::vector<PrimitiveType, AllocatorType>>,
-							SequenceUnsortedTag<std::deque<PrimitiveType, AllocatorType>>,
-							SequenceSortedTag<std::deque<PrimitiveType, AllocatorType>>,
-							SequenceUnsortedTag<std::list<PrimitiveType, AllocatorType>>,
-							SequenceSortedTag<std::list<PrimitiveType, AllocatorType>>
-						>{},
-							[=](auto algorithmTagTag)
-						{
-							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
-						});
-
-						ForEachTag(Tag<
-							SequenceUnsortedPlainPtrTag<std::vector<PrimitiveType*>>,
-							SequenceSortedPlainPtrTag<std::vector<PrimitiveType*>>,
-							SequenceUnsortedPlainPtrTag<std::deque<PrimitiveType*>>,
-							SequenceSortedPlainPtrTag<std::deque<PrimitiveType*>>,
-							SequenceUnsortedPlainPtrTag<std::list<PrimitiveType*>>,
-							SequenceSortedPlainPtrTag<std::list<PrimitiveType*>>
-						>{},
-							[=](auto algorithmTagTag)
-						{
-							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
-						});
-
-						ForEachTag(Tag<
-							SequenceUnsortedPtrTag<std::vector<PrimitiveType*>>,
-							SequenceSortedPtrTag<std::vector<PrimitiveType*>>,
-							SequenceUnsortedPtrTag<std::deque<PrimitiveType*>>,
-							SequenceSortedPtrTag<std::deque<PrimitiveType*>>,
-							SequenceUnsortedPtrTag<std::list<PrimitiveType*>>,
-							SequenceSortedPtrTag<std::list<PrimitiveType*>>
-						>{},
-							[=](auto algorithmTagTag)
-						{
-							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<std::allocator<PrimitiveType>>{});
-						});
-
-						using ColonyPointer = plf_colony_allocator<PrimitiveType>::pointer;
-						ForEachTag(Tag<
-							SequenceUnsortedPtrTag<std::vector<ColonyPointer>>,
-							SequenceSortedPtrTag<std::vector<ColonyPointer>>,
-							SequenceUnsortedPtrTag<std::deque<ColonyPointer>>,
-							SequenceSortedPtrTag<std::deque<ColonyPointer>>,
-							SequenceUnsortedPtrTag<std::list<ColonyPointer>>,
-							SequenceSortedPtrTag<std::list<ColonyPointer>>
-						>{},
-							[=](auto algorithmTagTag)
-						{
-							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-							Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<plf_colony_allocator<PrimitiveType>>{});
-						});
-
-						//Benchmark(turns, slots.value(), Tag<SequenceOtherTag<plf::colony<PrimitiveType>>>{}, Tag<void>{});
-					}
-
-					// Set-based algorithms
-					//
 					ForEachTag(Tag<
-						SetTag<std::set<PrimitiveType>>,
-						SetTag<std::unordered_set<PrimitiveType>>,
-						SetTag<boost::container::flat_set<PrimitiveType>>,
-						SetTag<stx::btree_set<PrimitiveType>>,
-						SetTag<btree::btree_set<PrimitiveType>>,
-						SetTag<google::sparse_hash_set<PrimitiveType>>,
-						SetTag<google::dense_hash_set<PrimitiveType>>,
-                        SetTag<tsl::hopscotch_set<PrimitiveType>>
+						std::allocator<ElementType>
 					>{},
-						[=](auto algorithmTagTag)
+						[=] (auto collectionAllocatorTag)
 					{
-						using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-						Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
-					});
+						using CollectionAllocatorType = typename decltype(collectionAllocatorTag)::value_type;
 
-                    ForEachTag(Tag<
-                        SetPlainPtrTag<std::set<PrimitiveType*, less_dereference>>,
-                        SetPlainPtrTag<std::unordered_set<PrimitiveType*, hash_dereference, equal_dereference>>,
-                        SetPlainPtrTag<boost::container::flat_set<PrimitiveType*, less_dereference>>,
-                        SetPlainPtrTag<stx::btree_set<PrimitiveType*, less_dereference>>,
-                        SetPlainPtrTag<btree::btree_set<PrimitiveType*, less_dereference>>,
-                        SetPlainPtrTag<google::sparse_hash_set<PrimitiveType*, hash_dereference, equal_dereference>>,
-                        SetPlainPtrTag<google::dense_hash_set<PrimitiveType*, hash_dereference, equal_dereference>>,
-                        SetPlainPtrTag<tsl::hopscotch_set<PrimitiveType*, hash_dereference, equal_dereference>>
-                    >{},
-                        [=](auto algorithmTagTag)
-                    {
-                        using AlgorithmTag = decltype(algorithmTagTag)::value_type;
-                        Benchmark(turns, slots.value(), AlgorithmTag{}, Tag<void>{});
-                    });
+						// Available integer bits must be capable of addressing all the slots.
+						//
+						if (static_cast<uint64_t>(slots.value()) > static_cast<uint64_t>(std::numeric_limits<PrimitiveType>::max())) {
+							return;
+						}
+
+						// Sequence-based algorithms
+						// When there are many slots, these work too slowly to be included in benchmark.
+						//
+						if (slots.value() <= maxSlotsForSequence.value())
+						{
+							ForEachTag(Tag<
+								SequenceUnsortedTag<std::vector<ElementType, CollectionAllocatorType>>,
+								SequenceSortedTag<std::vector<ElementType, CollectionAllocatorType>>,
+								SequenceUnsortedTag<std::deque<ElementType, CollectionAllocatorType>>,
+								SequenceSortedTag<std::deque<ElementType, CollectionAllocatorType>>,
+								SequenceUnsortedTag<std::list<ElementType, CollectionAllocatorType>>,
+								SequenceSortedTag<std::list<ElementType, CollectionAllocatorType>>
+							>{},
+								[=] (auto algorithmTagTag)
+							{
+								using AlgorithmTag = decltype(algorithmTagTag)::value_type;
+								Benchmark(turns, slots.value(), AlgorithmTag{}, slotAllocTag);
+							});
+
+							//Benchmark(turns, slots.value(), Tag<SequenceOtherTag<plf::colony<PrimitiveType>>>{}, Tag<void>{});
+						}
+
+						// Set-based algorithms
+						//
+						ForEachTag(Tag<
+							SetTag<std::set<ElementType, SlotAllocType::Less, CollectionAllocatorType>>,
+							SetTag<std::unordered_set<ElementType, SlotAllocType::Hash, SlotAllocType::Equal, CollectionAllocatorType>>,
+							SetTag<boost::container::flat_set<ElementType, SlotAllocType::Less, CollectionAllocatorType>>,
+							SetTag<stx::btree_set<ElementType, SlotAllocType::Less, stx::btree_default_set_traits<ElementType>, CollectionAllocatorType>>,
+							SetTag<btree::btree_set<ElementType, SlotAllocType::Less, CollectionAllocatorType, 256>>,
+							SetTag<google::sparse_hash_set<ElementType, SlotAllocType::Hash, SlotAllocType::Equal, CollectionAllocatorType>>,
+							SetTag<google::dense_hash_set<ElementType, SlotAllocType::Hash, SlotAllocType::Equal, CollectionAllocatorType>>,
+							SetTag<tsl::hopscotch_set<ElementType, SlotAllocType::Hash, SlotAllocType::Equal, CollectionAllocatorType, 62U, std::ratio<2i64, 1i64>>>
+						>{},
+							[=] (auto algorithmTagTag)
+						{
+							using AlgorithmTag = decltype(algorithmTagTag)::value_type;
+							Benchmark(turns, slots.value(), AlgorithmTag{}, slotAllocTag);
+						});
+					});
 				});
 			});
 		}
@@ -356,8 +340,7 @@ void Benchmark(int turns)
 			<< sep << "distribution"
 			<< sep << "algorithm";
 
-		ForEachIntegerConstant(slotsSeries, [=](auto slots)
-		{
+		ForEachIntegerConstant(slotsSeries, [=] (auto slots) {
 			std::cout << sep << "time:s" << (slots.value() - 1);
 		});
 
@@ -369,13 +352,12 @@ void Benchmark(int turns)
 				<< sep << br.Distribution
 				<< sep << br.Algorithm;
 
-			ForEachIntegerConstant(slotsSeries, [=](auto slots)
+			ForEachIntegerConstant(slotsSeries, [=] (auto slots)
 			{
 				std::cout << sep;
 
 				auto finding = br.SlotsToTimePerTurnNs.find(slots.value());
-				if (finding != std::end(br.SlotsToTimePerTurnNs))
-				{
+				if (finding != std::end(br.SlotsToTimePerTurnNs)) {
 					std::cout << finding->second;
 				}
 			});

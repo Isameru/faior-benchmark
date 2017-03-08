@@ -9,117 +9,71 @@ struct GameResult
 // Algorithms
 template<typename... T> struct PositionalTag : public Tag<T...> { };
 template<typename... T> struct SequenceUnsortedTag : public Tag<T...> { };
-template<typename... T> struct SequenceUnsortedPtrTag : public Tag<T...> { };
-template<typename... T> struct SequenceUnsortedPlainPtrTag : public Tag<T...> { };
 template<typename... T> struct SequenceSortedTag : public Tag<T...> { };
-template<typename... T> struct SequenceSortedPtrTag : public Tag<T...> { };
-template<typename... T> struct SequenceSortedPlainPtrTag : public Tag<T...> { };
 template<typename... T> struct SequenceOtherTag : public Tag<T...> { };
 template<typename... T> struct SetTag : public Tag<T...> { };
-template<typename... T> struct SetPtrTag : public Tag<T...> { };
-template<typename... T> struct SetPlainPtrTag : public Tag<T...> { };
+
+template<typename T>
+struct PrimitiveAllocMethod
+{
+	using ElementType = T;
+	using Less = std::less<T>;
+	using Equal = std::equal_to<T>;
+	using Hash = std::hash<T>;
+};
+
+template<typename F>
+class Finalizer
+{
+	F f;
+public:
+	explicit Finalizer(F&& f_) : f{f_} {}
+	~Finalizer() { f(); }
+};
+
+template<typename F>
+Finalizer<F> Finalize(F&& f)
+{
+	return Finalizer<F>{std::forward<F>(f)};
+}
 
 template<typename Collection>
 auto InitCollection(Collection&) { return 0; }
 
+template<typename Collection, typename AllocatorType>
+auto InitCollection(Collection&, AllocatorType&) { return 0; }
+
 template<typename PrimitiveType, typename... Others>
 auto InitCollection(google::sparse_hash_set<PrimitiveType, Others...>& c)
 {
-    c.set_deleted_key(0);
+	c.set_deleted_key(PrimitiveType{});
     return 0;
 }
 
-template<typename PrimitiveType, typename... Others>
-auto InitCollection(google::sparse_hash_set<PrimitiveType*, Others...>& c)
+template<typename AllocatorType, typename... CollectionParams>
+auto InitCollection(google::sparse_hash_set<CollectionParams...>& c, AllocatorType& alloc)
 {
-    auto ptr = std::make_unique<PrimitiveType>(0);
-    c.set_deleted_key(ptr.get());
-    return ptr;
+	auto slot0{alloc.Alloc(typename AllocatorType::PrimitiveType{})};
+    c.set_deleted_key(slot0);
+	return Finalize([&alloc, slot0] () { alloc.Free(slot0); });
 }
 
 template<typename PrimitiveType, typename... Others>
 auto InitCollection(google::dense_hash_set<PrimitiveType, Others...>& c)
 {
-    c.set_empty_key(0);
-    c.set_deleted_key(0);
+	c.set_empty_key(PrimitiveType{});
+	c.set_deleted_key(PrimitiveType{});
     return 0;
 }
 
-template<typename PrimitiveType, typename... Others>
-auto InitCollection(google::dense_hash_set<PrimitiveType*, Others...>& c)
+template<typename AllocatorType, typename... CollectionParams>
+auto InitCollection(google::dense_hash_set<CollectionParams...>& c, AllocatorType& alloc)
 {
-    auto ptr = std::make_unique<PrimitiveType>(0);
-    c.set_empty_key(ptr.get());
-    c.set_deleted_key(ptr.get());
-    return ptr;
+	auto slot0{alloc.Alloc(typename AllocatorType::PrimitiveType{})};
+    c.set_empty_key(slot0);
+    c.set_deleted_key(slot0);
+	return Finalize([&alloc, slot0] () { alloc.Free(slot0); });
 }
-
-/*
-	The following code is support for unique_ptr and shared_ptr:
-
-		template<typename T> struct less : public std::less<T> { };
-		template<typename T> struct hash : public std::hash<T> { };
-
-		template<typename ElementType>
-		struct less<std::unique_ptr<ElementType>>
-		{
-			bool operator()(const std::unique_ptr<ElementType>& a, const std::unique_ptr<ElementType>& b) const
-			{
-				return *a < *b;
-			}
-		};
-
-		template<typename ElementType>
-		struct less<std::shared_ptr<ElementType>>
-		{
-			bool operator()(const std::shared_ptr<ElementType>& a, const std::shared_ptr<ElementType>& b) const
-			{
-				return *a < *b;
-			}
-		};
-
-		template<typename ElementType>
-		bool operator==(const std::unique_ptr<ElementType>& a, const std::unique_ptr<ElementType>& b)
-		{
-			return *a == *b;
-		}
-
-		template<typename ElementType>
-		bool operator!=(const std::unique_ptr<ElementType>& a, const std::unique_ptr<ElementType>& b)
-		{
-			return *a != *b;
-		}
-
-		template<typename ElementType>
-		bool operator==(const std::shared_ptr<ElementType>& a, const std::shared_ptr<ElementType>& b)
-		{
-			return *a == *b;
-		}
-
-		template<typename ElementType>
-		bool operator!=(const std::shared_ptr<ElementType>& a, const std::shared_ptr<ElementType>& b)
-		{
-			return *a != *b;
-		}
-
-		template<class ElementType>
-		struct hash<std::unique_ptr<ElementType>>
-		{
-			std::size_t operator()(const std::unique_ptr<ElementType>& p) const
-			{
-				return std::hash<ElementType>{}(*p);
-			}
-		};
-
-		template<class ElementType>
-		struct hash<std::shared_ptr<ElementType>>
-		{
-			std::size_t operator()(const std::shared_ptr<ElementType>& p) const
-			{
-				return std::hash<ElementType>{}(*p);
-			}
-		};
-*/
 
 template<typename RandomGenerator, typename UnknownAlgorithm, typename UnknownAllocator>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, UnknownAlgorithm unknownAlgorithm, Tag<UnknownAllocator>) = delete;
@@ -129,14 +83,13 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 template<typename RandomGenerator>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, Tag<void>, Tag<void>)
 {
-	int64_t sumOfSizes { 0 };
+	int64_t sumOfSizes{0};
 
-	for (int turn = 0; turn < turns; ++turn)
-	{
+	for (int turn{0}; turn < turns; ++turn) {
 		sumOfSizes += randomGenerator();
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 // The collection is a fixed-sized, pre-allocated array.
@@ -144,26 +97,23 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 template<typename RandomGenerator, typename ElementType>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, PositionalTag<std::unique_ptr<ElementType[]>>, Tag<void>)
 {
-	auto collection = std::make_unique<ElementType[]>(slots);
-	int64_t sumOfSizes { 0 };
-	int64_t size { 0 };
+	auto collection{ std::make_unique<ElementType[]>(slots) };
+	int64_t sumOfSizes{0};
+	int64_t size{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		auto& item = collection[static_cast<size_t>(randomGenerator())];
+		auto& item{collection[static_cast<size_t>(randomGenerator())]};
 
 		size += item ? -1 : 1;
 		//size += 1 - 2 * item; <- Alternative, but performs similarily.
 		item ^= 1;
 
 		// This one is up to 35% slower:
-		//	if (item != 0)
-		//	{
+		//	if (item != 0) {
 		//		item = 0;
 		//		--size;
-		//	}
-		//	else
-		//	{
+		//	} else {
 		//		item = 1;
 		//		++size;
 		//	}
@@ -171,45 +121,44 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 		sumOfSizes += size;
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 template<typename RandomGenerator, typename BitMaskType>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, PositionalTag<std::unique_ptr<bool[]>, BitMaskType>, Tag<void>)
 {
-	constexpr auto maskBitSize = 8 * sizeof(BitMaskType);
+	constexpr int64_t maskBitSize{ 8 * sizeof(BitMaskType) };
+	auto collection{ std::make_unique<BitMaskType[]>((slots + maskBitSize - 1) / maskBitSize) };
+	int64_t sumOfSizes{0};
+	int64_t size{0};
 
-	auto collection = std::make_unique<BitMaskType[]>((slots + maskBitSize - 1) / maskBitSize);
-	int64_t sumOfSizes { 0 };
-	int64_t size { 0 };
-
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		const auto slot = randomGenerator();
+		const auto slot{randomGenerator()};
+		const auto index{slot / maskBitSize};
+		auto bitShift{static_cast<uint8_t>(slot - index * maskBitSize)};
+		const auto mask{static_cast<BitMaskType>(BitMaskType{1} << bitShift)};
 
-		const auto index = slot / maskBitSize;
-		const BitMaskType mask = static_cast<BitMaskType>(1) << (slot - index * maskBitSize);
-
-		auto& item = collection[static_cast<size_t>(index)];
+		auto& item{collection[static_cast<size_t>(index)]};
 		size += ((item & mask) != 0) ? -1 : 1;
 		item ^= mask;
 
 		sumOfSizes += size;
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 template<typename RandomGenerator>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, PositionalTag<std::vector<bool>>, Tag<void>)
 {
-	auto collection = std::vector<bool>(slots);
-	int64_t sumOfSizes { 0 };
-	int64_t size { 0 };
+	auto collection{std::vector<bool>(slots)};
+	int64_t sumOfSizes{0};
+	int64_t size{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		auto item = collection[static_cast<size_t>(randomGenerator())];
+		auto item{collection[static_cast<size_t>(randomGenerator())]};
 
 		size += item ? -1 : 1;
 		item = item ^ 1;
@@ -217,19 +166,19 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 		sumOfSizes += size;
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 template<typename RandomGenerator, int Slots>
 GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, PositionalTag<std::bitset<Slots>>, Tag<void>)
 {
-	auto collection = std::bitset<Slots>();
-	int64_t sumOfSizes { 0 };
-	int64_t size { 0 };
+	auto collection{std::bitset<Slots>()};
+	int64_t sumOfSizes{0};
+	int64_t size{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		auto item = collection[static_cast<size_t>(randomGenerator())];
+		auto item{collection[static_cast<size_t>(randomGenerator())]};
 
 		size += item ? -1 : 1;
 		item = item ^ 1;
@@ -237,298 +186,161 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 		sumOfSizes += size;
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
-template<typename RandomGenerator, typename SequenceType>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceUnsortedTag<SequenceType>, Tag<void>)
+template<typename RandomGenerator, typename SequenceType, typename PrimitiveType>
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceUnsortedTag<SequenceType>, Tag<PrimitiveAllocMethod<PrimitiveType>>)
 {
-	auto collection = SequenceType{ };
-	int64_t sumOfSizes { 0 };
+	auto collection{SequenceType{}};
+	int64_t sumOfSizes{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		auto slot = static_cast<SequenceType::value_type>(randomGenerator());
-
-		auto finding = std::find(std::begin(collection), std::end(collection), slot);
-		if (finding != std::end(collection))
-		{
+		auto slot{static_cast<PrimitiveType>(randomGenerator())};
+		auto finding{ std::find(std::begin(collection), std::end(collection), slot) };
+		if (finding != std::end(collection)) {
 			collection.erase(finding);
-		}
-		else
-		{
+		} else {
 			collection.push_back(std::move(slot));
 		}
-
 		sumOfSizes += collection.size();
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 template<typename RandomGenerator, typename SequenceType, typename AllocatorType>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceUnsortedPtrTag<SequenceType>, Tag<AllocatorType>)
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceUnsortedTag<SequenceType>, Tag<AllocatorType>)
 {
-	using ElementType = SequenceType::value_type;
-	using PrimitiveType = AllocatorType::value_type;
+	using PrimitiveType = AllocatorType::PrimitiveType;
+	using ElementType = AllocatorType::ElementType;
 
-	auto allocator = AllocatorType{ };
-	auto collection = SequenceType{ };
-	int64_t sumOfSizes { 0 };
+	auto allocator{AllocatorType{}};
+	auto collection{SequenceType{}};
+	int64_t sumOfSizes{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		const auto slot = static_cast<PrimitiveType>(randomGenerator());
-
-		auto finding = std::find_if(std::begin(collection), std::end(collection), [=](const auto elem){ return *elem == slot; });
-		if (finding != std::end(collection))
-		{
-			allocator.deallocate(*finding, 1);
+		auto slot{static_cast<PrimitiveType>(randomGenerator())};
+		auto finding{ std::find_if(std::begin(collection), std::end(collection), [=] (const auto elem){ return *elem == slot; }) };
+		if (finding != std::end(collection)) {
+			allocator.Free(*finding);
 			collection.erase(finding);
+		} else {
+			collection.push_back(allocator.Alloc(std::move(slot)));
 		}
-		else
-		{
-			auto p = allocator.allocate(1);
-			*p = slot;
-			collection.push_back(std::move(p));
-		}
-
 		sumOfSizes += collection.size();
 	}
 
-	return { sumOfSizes };
-}
-
-template<typename RandomGenerator, typename SequenceType>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceUnsortedPlainPtrTag<SequenceType>, Tag<void>)
-{
-	using ElementType = SequenceType::value_type;
-	using PrimitiveType = std::remove_pointer<ElementType>::type;
-
-	auto collection = SequenceType{ };
-	int64_t sumOfSizes { 0 };
-
-	for (int turn = 0; turn < turns; ++turn)
-	{
-		const auto slot = static_cast<PrimitiveType>(randomGenerator());
-
-		auto finding = std::find_if(std::begin(collection), std::end(collection), [=](const auto* elem){ return *elem == slot; });
-		if (finding != std::end(collection))
-		{
-			delete *finding;
-			collection.erase(finding);
-		}
-		else
-		{
-			collection.push_back(new PrimitiveType{slot});
-		}
-
-		sumOfSizes += collection.size();
-	}
-
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 // The collection has vector-conformant API, i.e. lower_bound(), push_back(), insert(), erase(), size().
 //
-template<typename RandomGenerator, typename SequenceType>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceSortedTag<SequenceType>, Tag<void>)
+template<typename RandomGenerator, typename SequenceType, typename PrimitiveType>
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceSortedTag<SequenceType>, Tag<PrimitiveAllocMethod<PrimitiveType>>)
 {
-	auto collection = SequenceType{ };
-	int64_t sumOfSizes { 0 };
+	auto collection{SequenceType{}};
+	int64_t sumOfSizes{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		const auto slot = static_cast<SequenceType::value_type>(randomGenerator());
-
-		auto finding = std::lower_bound(std::begin(collection), std::end(collection), slot /*, less<SequenceType::value_type>{}*/);
-		if (finding == std::end(collection))
-		{
+		auto slot{static_cast<PrimitiveType>(randomGenerator())};
+		auto finding{ std::lower_bound(std::begin(collection), std::end(collection), slot) };
+		if (finding == std::end(collection)) {
 			collection.push_back(std::move(slot));
-		}
-		else if (*finding == slot)
-		{
+		} else if (*finding == slot) {
 			collection.erase(finding);
-		}
-		else
-		{
+		} else {
 			collection.insert(finding, std::move(slot));
 		}
-
 		sumOfSizes += collection.size();
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
 template<typename RandomGenerator, typename SequenceType, typename AllocatorType>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceSortedPtrTag<SequenceType>, Tag<AllocatorType>)
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceSortedTag<SequenceType>, Tag<AllocatorType>)
 {
-	using ElementType = SequenceType::value_type;
-	using PrimitiveType = AllocatorType::value_type;
+	using ElementType = AllocatorType::ElementType;
+	using PrimitiveType = AllocatorType::PrimitiveType;
 
-	auto allocator = AllocatorType{ };
-	auto collection = SequenceType{ };
-	int64_t sumOfSizes { 0 };
+	auto allocator{AllocatorType{}};
+	auto collection{SequenceType{}};
+	int64_t sumOfSizes{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		const auto slot = static_cast<PrimitiveType>(randomGenerator());
-
-		auto finding = std::lower_bound(std::begin(collection), std::end(collection), &slot, [](const auto e1, const auto e2) { return *e1 < *e2; });
-		if (finding == std::end(collection))
-		{
-			auto p = allocator.allocate(1);
-			*p = slot;
-			collection.push_back(p);
-		}
-		else
-		{
-			auto stored = *finding;
-
-			if (*stored == slot)
-			{
-				allocator.deallocate(stored, 1);
+		auto slot{static_cast<PrimitiveType>(randomGenerator())};
+		auto finding{ std::lower_bound(std::begin(collection), std::end(collection), &slot, [] (const auto e1, const auto e2) { return *e1 < *e2; }) };
+		if (finding == std::end(collection)) {
+			collection.push_back(allocator.Alloc(std::move(slot)));
+		} else {
+			auto stored{*finding};
+			if (*stored == slot) {
+				allocator.Free(stored);
 				collection.erase(finding);
-			}
-			else
-			{
-				auto p = allocator.allocate(1);
-				*p = slot;
-				collection.insert(finding, std::move(p));
+			} else {
+				collection.insert(finding, allocator.Alloc(std::move(slot)));
 			}
 		}
-
 		sumOfSizes += collection.size();
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
-template<typename RandomGenerator, typename SequenceType>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceSortedPlainPtrTag<SequenceType>, Tag<void>)
-{
-	using ElementType = SequenceType::value_type;
-	using PrimitiveType = std::remove_pointer<ElementType>::type;
-
-	auto collection = SequenceType{ };
-	int64_t sumOfSizes { 0 };
-
-	for (int turn = 0; turn < turns; ++turn)
-	{
-		const auto slot = static_cast<PrimitiveType>(randomGenerator());
-
-		auto finding = std::lower_bound(std::begin(collection), std::end(collection), &slot, [](const auto* e1, const auto* e2) { return *e1 < *e2; });
-		if (finding == std::end(collection))
-		{
-			collection.push_back(new PrimitiveType{slot});
-		}
-		else
-		{
-			auto* stored = *finding;
-
-			if (*stored == slot)
-			{
-				delete *finding;
-				collection.erase(finding);
-			}
-			else
-			{
-				collection.insert(finding, new PrimitiveType{slot});
-			}
-		}
-
-		sumOfSizes += collection.size();
-	}
-
-	return { sumOfSizes };
-}
-
-/*
-	The following implementation was meant to be working with plf::colony, but this case is not valuable.
-
-		template<typename RandomGenerator, typename ElementType>
-		GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SequenceOtherTag<plf::colony<ElementType>>)
-		{
-			auto collection = plf::colony<ElementType>{ };
-			int64_t sumOfSizes { 0 };
-
-			for (int turn = 0; turn < turns; ++turn)
-			{
-				auto slot = randomGenerator();
-
-				auto finding = std::find(std::begin(collection), std::end(collection), slot);
-				if (finding != std::end(collection))
-				{
-					collection.erase(finding);
-				}
-				else
-				{
-					collection.insert(std::move(slot));
-				}
-
-				sumOfSizes += collection.size();
-			}
-
-			return { sumOfSizes };
-		}
-*/
-
-// The collection has set-conformant API, i.e. find(), insert(), erase(), size().
+// The collection has set-conformant API, i.e. insert(), erase(), size().
 //
-template<typename RandomGenerator, typename SetCollection>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetTag<SetCollection>, Tag<void>)
+template<typename RandomGenerator, typename SetCollection, typename PrimitiveType>
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetTag<SetCollection>, Tag<PrimitiveAllocMethod<PrimitiveType>>)
 {
-	auto collection = SetCollection{ };
-    auto collectionAux = InitCollection(collection);
-    int64_t sumOfSizes { 0 };
+	auto collection{SetCollection{}};
+	auto collectionAux{InitCollection(collection)};
+    int64_t sumOfSizes{0};
 
-	for (int turn = 0; turn < turns; ++turn)
+	for (int turn{0}; turn < turns; ++turn)
 	{
-		auto insertion = collection.insert(static_cast<SetCollection::value_type>(randomGenerator()));
-		if (!insertion.second)
-		{
+		auto insertion{collection.insert(static_cast<PrimitiveType>(randomGenerator()))};
+		if (!insertion.second) {
 			collection.erase(insertion.first);
 		}
-
 		sumOfSizes += collection.size();
 	}
 
-	return { sumOfSizes };
+	return {sumOfSizes};
 }
 
-template<typename RandomGenerator, typename SetCollection>
-GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetPlainPtrTag<SetCollection>, Tag<void>)
+template<typename RandomGenerator, typename SetCollection, typename AllocatorType>
+GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerator, SetTag<SetCollection>, Tag<AllocatorType>)
 {
-    using ElementType = SetCollection::value_type;
-    using PrimitiveType = std::remove_pointer<ElementType>::type;
+	using PrimitiveType = AllocatorType::PrimitiveType;
+	using ElementType = AllocatorType::ElementType;
 
-    auto collection = SetCollection{ };
-    auto collectionAux = InitCollection(collection);
-    int64_t sumOfSizes { 0 };
-    PrimitiveType* slotAllocation = new PrimitiveType{};
+	auto allocator{AllocatorType{}};
+	auto collection{SetCollection{}};
+	auto collectionAux{InitCollection(collection, allocator)};
+    int64_t sumOfSizes{0};
 
-    for (int turn = 0; turn < turns; ++turn)
-    {
+	auto slotAllocation{allocator.Alloc()};
+
+	for (int turn{0}; turn < turns; ++turn)
+	{
         *slotAllocation = static_cast<PrimitiveType>(randomGenerator());
-
-        auto insertion = collection.insert(slotAllocation);
-        if (!insertion.second)
-        {
-            auto* deletedPtr = *insertion.first;
+		auto insertion{collection.insert(slotAllocation)};
+        if (!insertion.second) {
+            auto deletedPtr = *insertion.first;
             collection.erase(insertion.first);
-            delete deletedPtr;
+			allocator.Free(deletedPtr);
             // slotAllocation shall be reused in the next iteration.
+        } else {
+            slotAllocation = allocator.Alloc();
         }
-        else
-        {
-            slotAllocation = new PrimitiveType{};
-        }
-
         sumOfSizes += collection.size();
     }
 
-    delete slotAllocation;
-
-    return { sumOfSizes };
+	allocator.Free(slotAllocation);
+    return {sumOfSizes};
 }
