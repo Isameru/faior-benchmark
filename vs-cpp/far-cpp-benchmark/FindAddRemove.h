@@ -223,7 +223,7 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 	for (int turn{0}; turn < turns; ++turn)
 	{
 		auto slot{static_cast<PrimitiveType>(randomGenerator())};
-		auto finding{ std::find_if(std::begin(collection), std::end(collection), [=] (const auto elem){ return *elem == slot; }) };
+		auto finding{ std::find_if(std::begin(collection), std::end(collection), [=] (const auto& elem){ return *elem == slot; }) };
 		if (finding != std::end(collection)) {
 			allocator.Free(*finding);
 			collection.erase(finding);
@@ -274,11 +274,11 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
 	for (int turn{0}; turn < turns; ++turn)
 	{
 		auto slot{static_cast<PrimitiveType>(randomGenerator())};
-		auto finding{ std::lower_bound(std::begin(collection), std::end(collection), &slot, [] (const auto e1, const auto e2) { return *e1 < *e2; }) };
+		auto finding{ std::lower_bound(std::begin(collection), std::end(collection), &slot, [] (const auto& e1, const auto& e2) { return *e1 < *e2; }) };
 		if (finding == std::end(collection)) {
 			collection.push_back(allocator.Alloc(std::move(slot)));
 		} else {
-			auto stored{*finding};
+			const auto stored{*finding};
 			if (*stored == slot) {
 				allocator.Free(stored);
 				collection.erase(finding);
@@ -331,7 +331,7 @@ GameResult PlayFindAddRemove(int turns, int slots, RandomGenerator randomGenerat
         *slotAllocation = static_cast<PrimitiveType>(randomGenerator());
 		auto insertion{collection.insert(slotAllocation)};
         if (!insertion.second) {
-            auto deletedPtr = *insertion.first;
+            const auto deletedPtr{*insertion.first};
             collection.erase(insertion.first);
 			allocator.Free(deletedPtr);
             // slotAllocation shall be reused in the next iteration.

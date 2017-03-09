@@ -79,10 +79,10 @@ namespace
 			void Free(T* p) { delete p; }
 		};
 
-		template<typename T>
-		class StdAllocMethod : protected std::allocator<T>
+		template<typename T, typename Allocator>
+		class StdAllocMethod : protected Allocator
 		{
-			using BaseClass = std::allocator<T>;
+			using BaseClass = Allocator;
 		public:
 			using PrimitiveType = T;
 			using ElementType = T*;
@@ -95,6 +95,42 @@ namespace
 			T* Alloc(T&& v) { auto p = typename BaseClass::allocate(1); *p = T{std::move(v)}; return p; } // construct is deprecated
 			void Free(T* p) { BaseClass::deallocate(p, 1); }
 		};
+
+        /*
+            unique_ptr<~> is too problematic to be contained and manipulated in container-agnostic generic procedure.
+
+                template<typename T>
+                class UniquePtrAllocMethod
+                {
+                public:
+                    using PrimitiveType = T;
+                    using ElementType = std::unique_ptr<T>;
+
+                    using Less = less_dereference;
+                    using Equal = equal_dereference;
+                    using Hash = hash_dereference;
+
+                    ElementType Alloc() { return std::make_unique<T>(); }
+                    ElementType Alloc(T&& v) { return std::make_unique<T>(v); }
+                    void Free(const ElementType&) { }
+                };
+        */
+
+        template<typename T>
+        class SharedPtrAllocMethod
+        {
+        public:
+            using PrimitiveType = T;
+            using ElementType = std::shared_ptr<T>;
+
+            using Less = less_dereference;
+            using Equal = equal_dereference;
+            using Hash = hash_dereference;
+
+            ElementType Alloc() { return std::make_shared<T>(); }
+            ElementType Alloc(T&& v) { return std::make_shared<T>(v); }
+            void Free(const ElementType&) { }
+        };
 
 		template<typename T>
 		class PlfColonyAllocMethod
@@ -267,8 +303,9 @@ void Benchmark(int turns)
 				ForEachTag(Tag<
 					PrimitiveAllocMethod<PrimitiveType>,
 					slotallocmethod::NewAllocMethod<PrimitiveType>,
-					slotallocmethod::StdAllocMethod<PrimitiveType>,
-					slotallocmethod::PlfColonyAllocMethod<PrimitiveType>
+					slotallocmethod::StdAllocMethod<PrimitiveType, std::allocator<PrimitiveType>>,
+                    slotallocmethod::SharedPtrAllocMethod<PrimitiveType>,
+                    slotallocmethod::PlfColonyAllocMethod<PrimitiveType>
 				>{},
 					[=] (auto slotAllocTag)
 				{
